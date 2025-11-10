@@ -84,7 +84,13 @@ async function getAllPostsParallel({ since, totalLimit = 100, concurrency = 5 })
 // Endpoint principal
 app.get("/api/posts", async (req, res) => {
   try {
-    const since = req.query.since || "2025-11-08";
+    const cutoffTime = new Date().getTime() - 24 * 60 * 60 * 1000;
+    let cutoffDate = new Date(cutoffTime);
+    cutoffDate = cutoffDate.toISOString(); // <-- ou .toUTCString()
+
+    console.log(cutoffDate);
+
+    const since = req.query.since || cutoffDate;
     console.log("Using since:", since);
     const totalLimit = parseInt(req.query.limit || "100", 10);
     const concurrency = parseInt(req.query.concurrency || "1", 10);

@@ -80,9 +80,10 @@
 
     <script>
       (() => {
+        const REP_API_URL = "https://hafsql-api.mahdiyari.info/reputations/";
         const API_URL = "http://localhost:4000/api/posts";
         const DB_NAME = "HiveSyncDB";
-        const DB_VERSION = 5; // aumenta pra recriar com meta
+        const DB_VERSION = 8; // aumenta pra recriar com meta
         let db = null;
 
         let currentPage = 1;
@@ -103,30 +104,30 @@
         const pageInfo = document.getElementById("pageInfo");
 
         const authorFlairs = {
-            "hive-watchers": "Scam Hunter",
-            "spaminator": "Spam Fighter",
-            "arcange": "Hive Witness",
-            "curamax":"What? Possible AI?",
-            "helios.voter": "Bot Voter",
-            "rainbowdash4l": "TIP SPAMMER",
+          "hive-watchers": "Scam Hunter",
+          spaminator: "Spam Fighter",
+          arcange: "Hive Witness",
+          curamax: "What? Possible AI?",
+          "helios.voter": "Bot Voter",
+          rainbowdash4l: "TIP SPAMMER",
+          taskmaster4450le: "SPAMMER",
         };
 
         const spammerList = new Set([
-            "spammer-alpha",
-            "scam-bot-123",
-            "outro-spammer",
-            "ai-summaries",
-            "hivebuzz",
-            "lolzbot",
-            "graphene-faucet",
-            "ladytoken",
-            "redditposh",
-            "lstr.alerts",
-            "duo-tip",
-            "pizzabot",
-            // Adicione aqui os nomes exatos dos autores
+          "spammer-alpha",
+          "scam-bot-123",
+          "outro-spammer",
+          "ai-summaries",
+          "hivebuzz",
+          "lolzbot",
+          "graphene-faucet",
+          "ladytoken",
+          "redditposh",
+          "lstr.alerts",
+          "duo-tip",
+          "pizzabot",
+          // Adicione aqui os nomes exatos dos autores
         ]);
-        
 
         function setStatus(msg, cls = "text-gray-600") {
           statusEl.className = cls;
@@ -163,6 +164,10 @@
               // Adiciona o índice 'by_created' no campo 'created'
               if (!postsStore.indexNames.contains("by_created")) {
                 postsStore.createIndex("by_created", "created");
+              }
+
+              if (!db.objectStoreNames.contains("reputations")) {
+                db.createObjectStore("reputations", { keyPath: "account" });
               }
 
               if (!db.objectStoreNames.contains("meta")) {
@@ -235,6 +240,75 @@
             tx.oncomplete = resolve;
             tx.onerror = (e) => reject(e.target.error);
           });
+        }
+
+        // === Reputação ===
+        async function getReputationFromCache(account) {
+          const db = await getDB();
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction("reputations", "readonly");
+            const store = tx.objectStore("reputations");
+            const req = store.get(account);
+
+            req.onsuccess = () => {
+              resolve(req.result ? req.result.reputation : null);
+            };
+            req.onerror = (e) => reject(e.target.error);
+          });
+        }
+
+        async function saveReputationToCache(account, reputation) {
+          const db = await getDB();
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction("reputations", "readwrite");
+            const store = tx.objectStore("reputations");
+
+            store.put({ account, reputation });
+            tx.oncomplete = resolve;
+            tx.onerror = (e) => reject(e.target.error);
+          });
+        }
+
+        /**
+         * Retorna a reputação, buscando primeiro no cache e depois na API.
+         * @param {string} account - O nome da conta.
+         * @returns {Promise<string>} A reputação formatada como string.
+         */
+        async function getReputationCached(account) {
+          try {
+            // 1. Tenta buscar no cache
+            const cachedReputation = await getReputationFromCache(account);
+            if (cachedReputation) {
+              return cachedReputation;
+            }
+
+            // 2. Se não estiver no cache, busca na API
+            const url = `${REP_API_URL}${String(account)}`;
+            const resp = await fetch(url);
+            if (!resp.ok) {
+              throw new Error("HTTP " + resp.status);
+            }
+            const data = await resp.json();
+
+            // A API retorna um objeto com 'reputation', que é um número.
+            // Se data.reputation for undefined, String(undefined) vira "undefined".
+            // Vamos garantir que isso não aconteça:
+            const reputation = String(data.toFixed(0) || "25"); // Usa 25 (padrão) se a API falhar
+
+            console.log(reputation);
+            // 3. Salva no cache para uso futuro
+            await saveReputationToCache(account, reputation);
+
+            return reputation;
+          } catch (error) {
+            // Se QUALQUER coisa acima falhar (cache ou rede), caímos aqui.
+            console.error(
+              `❌ Erro ao buscar reputação para ${account}:`,
+              error
+            );
+            // Retorna um valor padrão para não quebrar o layout
+            return "Erro";
+          }
         }
 
         // === Sincronização ===
@@ -337,7 +411,7 @@
             getTotalPostCount(),
           ]);
 
-          renderPosts(items);
+          await renderPosts(items);
           updateControls(total); // Passa o total para atualizar os controles
 
           if (items.length > 0) {
@@ -351,8 +425,38 @@
             );
           }
         }
+        function normalizeName(name) {
+          return name
+            .toLowerCase() // opcional, pra padronizar
+            .replace(/[^a-z0-9_]/gi, "_"); // substitui tudo que não for letra/número/_ por "_"
+        }
 
-        function renderPosts(items) {
+        async function getReputation(account) {
+          try {
+            // 1️⃣ tenta pegar do cache
+            const cached = await getReputationFromCache(account);
+            if (cached !== null) {
+              return { account, data: cached };
+            }
+
+            // 2️⃣ se não tiver no cache, busca na API
+            const url = `${REP_API_URL}${account}`;
+            const resp = await fetch(url);
+            if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+            const value = await resp.json(); // API retorna número cru
+
+            // 3️⃣ converte para inteiro e salva
+            const rep = Number(value).toFixed(0);
+            await saveReputationToCache(account, rep);
+
+            return { account, data: rep };
+          } catch (err) {
+            console.error("Erro ao buscar reputação:", err);
+            return { account, data: 25 }; // fallback
+          }
+        }
+        async function renderPosts(items) {
           //countPosts();
           postsContainer.innerHTML = "";
           if (!items.length) {
@@ -360,17 +464,31 @@
               '<div class="py-8 text-center text-gray-500">Nenhum post nesta página.</div>';
             return;
           }
+          let reputations = {};
 
-          items.forEach((p) => {
-            if (spammerList.has(p.author)) {
-                return; // Pula este post e vai para o próximo
-            }
+          for (const p of items) {
+            reputations[p.author] = await getReputation(p.author);
+          }
+          //reputations = Object.values(reputations);
+
+          items.forEach((p, index) => {
+            if (spammerList.has(p.author)) return;
+
+            const currentReputation = reputations[p.author]?.data ?? 25;
+            if (currentReputation >= 50) return;
+
+            const repDisplay = currentReputation
+              ? `<span class="text-xs ml-1 text-gray-400">(${currentReputation})</span>`
+              : "";
+
             const card = document.createElement("article");
             card.className = "bg-white shadow p-4 rounded-lg";
 
             const flairText = authorFlairs[p.author];
-            const flairHtml = flairText 
-              ? `<span class="ml-2 px-1.5 py-0.5 text-xs font-semibold bg-red-100 text-red-800 rounded-full">${escapeHtml(flairText)}</span>`
+            const flairHtml = flairText
+              ? `<span class="ml-2 px-1.5 py-0.5 text-xs font-semibold bg-red-100 text-red-800 rounded-full">${escapeHtml(
+                  flairText
+                )}</span>`
               : ""; // Se não, retorna uma string vazia
 
             const title = escapeHtml(p.title || "(sem título)");
@@ -390,7 +508,7 @@
             <h3 class="text-lg font-semibold">${title}</h3>
             <div class="text-xs text-gray-500">Por <b>${escapeHtml(
               p.author
-            )}</b> ${flairHtml} <span class="mx-2">•</span> ${escapedCreated}</div>
+            )}</b> Rep: ${repDisplay} Flair: ${flairHtml} <span class="mx-2">•</span> ${escapedCreated}</div>
           </div>
           ${rootTag}
         </div>
@@ -430,23 +548,25 @@
         }
         async function deleteOldPosts() {
           const db = await getDB();
-          
+
           // 1. Calcular a data de corte
           // O campo 'created' é uma string ISO (ex: "2024-01-01T10:00:00").
           // Podemos usar um objeto Date para criar o range.
-          const cutoffTime = new Date().getTime() - (24 * 60 * 60 * 1000);
-          const cutoffDate = new Date(cutoffTime); 
+          const cutoffTime = new Date().getTime() - 24 * 60 * 60 * 1000;
+          const cutoffDate = new Date(cutoffTime);
 
-          console.log(`🧹 Deletando posts mais antigos que ${cutoffDate.toLocaleString()}`);
+          console.log(
+            `🧹 Deletando posts mais antigos que ${cutoffDate.toLocaleString()}`
+          );
 
           return new Promise((resolve, reject) => {
             // 2. Abrir transação em modo "readwrite"
-            const tx = db.transaction("posts", "readwrite"); 
+            const tx = db.transaction("posts", "readwrite");
             const store = tx.objectStore("posts");
             const index = store.index("by_created");
 
             // 3. Criar um range: tudo que for *menor que ou igual a* data de corte
-            const range = IDBKeyRange.upperBound(cutoffDate.toISOString()); 
+            const range = IDBKeyRange.upperBound(cutoffDate.toISOString());
 
             const req = index.openCursor(range); // Abre cursor no índice
             let deleteCount = 0;
@@ -455,7 +575,7 @@
               const cursor = event.target.result;
               if (cursor) {
                 // 4. Encontrou um post antigo: delete!
-                cursor.delete(); 
+                cursor.delete();
                 deleteCount++;
                 cursor.continue(); // Vai para o próximo item no range
               } else {
@@ -466,7 +586,10 @@
             };
 
             req.onerror = (e) => {
-              console.error("❌ Erro ao deletar posts antigos:", e.target.error);
+              console.error(
+                "❌ Erro ao deletar posts antigos:",
+                e.target.error
+              );
               reject(e.target.error);
             };
           });
