@@ -1,296 +1,533 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="pt-BR">
-<head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Hive Sync — IndexedDB & Paginação</title>
-  <script src="https://cdn.tailwindcss.com"></script>
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.2/dist/purify.min.js"></script>
-</head>
-<body class="bg-gray-100 text-gray-800">
-
-  <header class="bg-white shadow-md py-4">
-    <div class="max-w-6xl mx-auto flex justify-between items-center px-4">
-      <h1 class="text-2xl font-bold text-blue-600">Hive Sync</h1>
-      <div class="flex items-center gap-3">
-        <button id="syncBtn" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">🔄 Sincronizar</button>
-        <div class="text-sm text-gray-600">Page size:
-          <select id="pageSizeSel" class="ml-2 border rounded px-2 py-1">
-            <option value="10000" >10000</option>
-            <option value="5000" >5000</option>
-            <option value="1000" selected>1000</option>
-            <option value="500">500</option>
-            <option value="200">200</option>
-            <option value="100">100</option>
-          </select>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Hive Sync — IndexedDB & Paginação</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.2/dist/purify.min.js"></script>
+  </head>
+  <body class="bg-gray-100 text-gray-800">
+    <header class="bg-white shadow-md py-4">
+      <div class="max-w-6xl mx-auto flex justify-between items-center px-4">
+        <h1 class="text-2xl font-bold text-blue-600">Hive Sync</h1>
+        <div class="flex items-center gap-3">
+          <button
+            id="syncBtn"
+            class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg"
+          >
+            🔄 Sincronizar
+          </button>
+          <div class="text-sm text-gray-600">
+            Page size:
+            <select id="pageSizeSel" class="ml-2 border rounded px-2 py-1">
+              <option value="10000">10000</option>
+              <option value="5000">5000</option>
+              <option value="1000" selected>1000</option>
+              <option value="500">500</option>
+              <option value="200">200</option>
+              <option value="100">100</option>
+            </select>
+          </div>
         </div>
       </div>
-    </div>
-  </header>
+    </header>
 
-  <section class="max-w-6xl mx-auto mt-4 px-4 text-sm text-gray-600" id="status">Carregue uma página para começar.</section>
+    <section
+      class="max-w-6xl mx-auto mt-4 px-4 text-sm text-gray-600"
+      id="status"
+    >
+      Carregue uma página para começar.
+    </section>
 
-  <main class="max-w-6xl mx-auto mt-6 px-4">
-    <div class="flex items-center justify-between mb-4">
-      <div class="flex gap-2 items-center">
-        <button id="prevBtn" class="px-3 py-1 border rounded bg-white" disabled>← Anterior</button>
-        <button id="nextBtn" class="px-3 py-1 border rounded bg-white" disabled>Próxima →</button>
-        <span id="pageInfo" class="text-sm text-gray-600 ml-3">Página 1</span>
+    <main class="max-w-6xl mx-auto mt-6 px-4">
+      <div class="flex items-center justify-between mb-4">
+        <div class="flex gap-2 items-center">
+          <button
+            id="prevBtn"
+            class="px-3 py-1 border rounded bg-white"
+            disabled
+          >
+            ← Anterior
+          </button>
+          <button
+            id="nextBtn"
+            class="px-3 py-1 border rounded bg-white"
+            disabled
+          >
+            Próxima →
+          </button>
+          <span id="pageInfo" class="text-sm text-gray-600 ml-3">Página 1</span>
+        </div>
+
+        <div class="flex gap-2 items-center">
+          <label class="text-sm text-gray-600">Ir para página</label>
+          <input
+            id="gotoInput"
+            class="border rounded px-2 py-1 w-20"
+            type="number"
+            min="1"
+            value="1"
+          />
+          <button id="gotoBtn" class="px-3 py-1 border rounded bg-white">
+            Ir
+          </button>
+        </div>
       </div>
 
-      <div class="flex gap-2 items-center">
-        <label class="text-sm text-gray-600">Ir para página</label>
-        <input id="gotoInput" class="border rounded px-2 py-1 w-20" type="number" min="1" value="1" />
-        <button id="gotoBtn" class="px-3 py-1 border rounded bg-white">Ir</button>
-      </div>
-    </div>
+      <div id="postsContainer" class="space-y-4"></div>
+    </main>
 
-    <div id="postsContainer" class="space-y-4"></div>
-  </main>
+    <script>
+      (() => {
+        const API_URL = "http://localhost:4000/api/posts";
+        const DB_NAME = "HiveSyncDB";
+        const DB_VERSION = 5; // aumenta pra recriar com meta
+        let db = null;
 
-<script>
-(() => {
-  const API_URL = "http://localhost:4000/api/posts";
-  const DB_NAME = "HiveSyncDB";
-  const DB_VERSION = 4; // aumenta pra recriar com meta
-  let db = null;
-
-  let currentPage = 1;
-  function pageSize() { return Number(pageSizeSel.value || 1000); }
-  let totalPages = 1;
-
-  // === Referências DOM ===
-  const statusEl = document.getElementById("status");
-  const postsContainer = document.getElementById("postsContainer");
-  const syncBtn = document.getElementById("syncBtn");
-  const pageSizeSel = document.getElementById("pageSizeSel");
-  const prevBtn = document.getElementById("prevBtn");
-  const nextBtn = document.getElementById("nextBtn");
-  const gotoBtn = document.getElementById("gotoBtn");
-  const gotoInput = document.getElementById("gotoInput");
-  const pageInfo = document.getElementById("pageInfo");
-
-  function setStatus(msg, cls="text-gray-600") {
-    statusEl.className = cls;
-    statusEl.textContent = msg;
-  }
-
-  // === IndexedDB ===
-  function openDB() {
-    return new Promise((resolve, reject) => {
-      const request = indexedDB.open(DB_NAME, DB_VERSION);
-
-      request.onupgradeneeded = (event) => {
-        const db = event.target.result;
-        if (!db.objectStoreNames.contains("posts")) {
-          db.createObjectStore("posts", { keyPath: "permlink" });
+        let currentPage = 1;
+        function pageSize() {
+          return Number(pageSizeSel.value || 1000);
         }
-        if (!db.objectStoreNames.contains("meta")) {
-          db.createObjectStore("meta", { keyPath: "key" });
+        let totalPages = 1;
+
+        // === Referências DOM ===
+        const statusEl = document.getElementById("status");
+        const postsContainer = document.getElementById("postsContainer");
+        const syncBtn = document.getElementById("syncBtn");
+        const pageSizeSel = document.getElementById("pageSizeSel");
+        const prevBtn = document.getElementById("prevBtn");
+        const nextBtn = document.getElementById("nextBtn");
+        const gotoBtn = document.getElementById("gotoBtn");
+        const gotoInput = document.getElementById("gotoInput");
+        const pageInfo = document.getElementById("pageInfo");
+
+        const authorFlairs = {
+            "hive-watchers": "Scam Hunter",
+            "spaminator": "Spam Fighter",
+            "arcange": "Hive Witness",
+            "curamax":"What? Possible AI?",
+            "helios.voter": "Bot Voter",
+            "rainbowdash4l": "TIP SPAMMER",
+        };
+
+        const spammerList = new Set([
+            "spammer-alpha",
+            "scam-bot-123",
+            "outro-spammer",
+            "ai-summaries",
+            "hivebuzz",
+            "lolzbot",
+            "graphene-faucet",
+            "ladytoken",
+            "redditposh",
+            "lstr.alerts",
+            "duo-tip",
+            "pizzabot",
+            // Adicione aqui os nomes exatos dos autores
+        ]);
+        
+
+        function setStatus(msg, cls = "text-gray-600") {
+          statusEl.className = cls;
+          statusEl.textContent = msg;
         }
-        console.log("📦 Stores criadas/confirmadas:", db.objectStoreNames);
-      };
 
-      request.onsuccess = (event) => {
-        db = event.target.result;
-        console.log("✅ Banco aberto com sucesso:", db);
-        resolve(db);
-      };
+        async function getTotalPostCount() {
+          const db = await getDB();
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction("posts", "readonly");
+            const store = tx.objectStore("posts");
+            const req = store.count();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = (e) => reject(e.target.error);
+          });
+        }
 
-      request.onerror = (event) => {
-        console.error("❌ Erro ao abrir DB:", event.target.error);
-        reject(event.target.error);
-      };
-    });
-  }
+        // === IndexedDB ===
+        function openDB() {
+          return new Promise((resolve, reject) => {
+            const request = indexedDB.open(DB_NAME, DB_VERSION);
 
-  async function getDB() {
-    if (db) return db;
-    db = await openDB();
-    return db;
-  }
+            request.onupgradeneeded = (event) => {
+              const db = event.target.result;
+              let postsStore;
 
+              if (!db.objectStoreNames.contains("posts")) {
+                postsStore = db.createObjectStore("posts", {
+                  keyPath: "permlink",
+                });
+              } else {
+                postsStore = event.target.transaction.objectStore("posts");
+              }
+              // Adiciona o índice 'by_created' no campo 'created'
+              if (!postsStore.indexNames.contains("by_created")) {
+                postsStore.createIndex("by_created", "created");
+              }
 
+              if (!db.objectStoreNames.contains("meta")) {
+                db.createObjectStore("meta", { keyPath: "key" });
+              }
+              console.log(
+                "📦 Stores criadas/confirmadas:",
+                db.objectStoreNames
+              );
+            };
 
-  async function savePosts(posts) {
-    const db = await getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("posts", "readwrite");
-      const store = tx.objectStore("posts");
-      posts.forEach(p => store.put(p));
-      tx.oncomplete = () => resolve();
-      tx.onerror = e => reject(e.target.error);
-    });
-  }
+            request.onsuccess = (event) => {
+              db = event.target.result;
+              console.log("✅ Banco aberto com sucesso:", db);
+              resolve(db);
+            };
 
-  async function getAllPosts() {
-    const db = await getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("posts", "readonly");
-      const store = tx.objectStore("posts");
-      const req = store.getAll();
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = e => reject(e.target.error);
-    });
-  }
+            request.onerror = (event) => {
+              console.error("❌ Erro ao abrir DB:", event.target.error);
+              reject(event.target.error);
+            };
+          });
+        }
 
-  async function getLastSyncedDate() {
-    const db = await getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("meta", "readonly");
-      const store = tx.objectStore("meta");
-      const req = store.get("lastSynced");
-      req.onsuccess = () => resolve(req.result ? req.result.value : null);
-      req.onerror = () => reject(req.error);
-    });
-  }
+        async function getDB() {
+          if (db) return db;
+          db = await openDB();
+          return db;
+        }
 
-  async function setLastSyncedDate(date) {
-    const db = await getDB();
-    return new Promise((resolve, reject) => {
-      const tx = db.transaction("meta", "readwrite");
-      const store = tx.objectStore("meta");
-      store.put({ key: "lastSynced", value: date });
-      tx.oncomplete = resolve;
-      tx.onerror = e => reject(e.target.error);
-    });
-  }
+        async function savePosts(posts) {
+          const db = await getDB();
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction("posts", "readwrite");
+            const store = tx.objectStore("posts");
+            posts.forEach((p) => store.put(p));
+            tx.oncomplete = () => resolve();
+            tx.onerror = (e) => reject(e.target.error);
+          });
+        }
 
-  // === Sincronização ===
-  async function syncFromServer() {
-    const lastDate = await getLastSyncedDate();
-    let url = `${API_URL}?limit=${pageSize()}`;
-    if (lastDate) url += `&since=${encodeURIComponent(lastDate)}`;
-    setStatus(`🔄 Sincronizando com servidor... (since=${lastDate || "nenhum"})`, "text-blue-600");
+        async function getAllPosts() {
+          const db = await getDB();
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction("posts", "readonly");
+            const store = tx.objectStore("posts");
+            const req = store.getAll();
+            req.onsuccess = () => resolve(req.result);
+            req.onerror = (e) => reject(e.target.error);
+          });
+        }
 
-    const resp = await fetch(url);
-    if (!resp.ok) throw new Error("HTTP " + resp.status);
-    const j = await resp.json();
-    const items = j.items || j;
+        async function getLastSyncedDate() {
+          const db = await getDB();
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction("meta", "readonly");
+            const store = tx.objectStore("meta");
+            const req = store.get("lastSynced");
+            req.onsuccess = () => resolve(req.result ? req.result.value : null);
+            req.onerror = () => reject(req.error);
+          });
+        }
 
-    if (items.length === 0) {
-      setStatus("✅ Nenhum novo post para sincronizar.", "text-green-600");
-      return;
-    }
+        async function setLastSyncedDate(date) {
+          const db = await getDB();
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction("meta", "readwrite");
+            const store = tx.objectStore("meta");
+            store.put({ key: "lastSynced", value: date });
+            tx.oncomplete = resolve;
+            tx.onerror = (e) => reject(e.target.error);
+          });
+        }
 
-    await savePosts(items);
-    const newestDate = items.reduce((max, p) =>
-      new Date(p.created) > new Date(max) ? p.created : max,
-      lastDate || items[0].created
-    );
-    await setLastSyncedDate(newestDate);
-    setStatus(`✅ Sincronizados ${items.length} novos posts. Último: ${new Date(newestDate).toLocaleString()}`, "text-green-600");
-  }
+        // === Sincronização ===
+        async function syncFromServer() {
+          const lastDate = await getLastSyncedDate();
+          let url = `${API_URL}?limit=${pageSize()}`;
+          if (lastDate) url += `&since=${encodeURIComponent(lastDate)}`;
+          setStatus(
+            `🔄 Sincronizando com servidor... (since=${lastDate || "nenhum"})`,
+            "text-blue-600"
+          );
 
-  async function getPage(page) {
-    const all = await getAllPosts();
-    all.sort((a, b) => new Date(b.created) - new Date(a.created));
-    const start = (page - 1) * pageSize();
-    const end = start + pageSize();
-    return all.slice(start, end);
-  }
+          const resp = await fetch(url);
+          if (!resp.ok) throw new Error("HTTP " + resp.status);
+          const j = await resp.json();
+          const items = j.items || j;
 
-  async function countPosts(){
-    const allpost = await getAllPosts();
-    console.log('allpost');
-    console.log(allpost);
+          if (items.length === 0) {
+            setStatus(
+              "✅ Nenhum novo post para sincronizar.",
+              "text-green-600"
+            );
+            return;
+          }
 
-    const counts = {};
-    allpost.forEach(p => {
-        counts[p.author] = (counts[p.author] || 0) + 1;
-    });
+          await savePosts(items);
+          const newestDate = items.reduce(
+            (max, p) => (new Date(p.created) > new Date(max) ? p.created : max),
+            lastDate || items[0].created
+          );
+          await setLastSyncedDate(newestDate);
+          setStatus(
+            `✅ Sincronizados ${items.length} novos posts. Último: ${new Date(
+              newestDate
+            ).toLocaleString()}`,
+            "text-green-600"
+          );
+        }
 
-    const ranked = Object.entries(counts)
-    .sort((a, b) => b[1] - a[1]);
-    console.log(ranked);
+        async function getPage(page) {
+          const db = await getDB();
+          const items = [];
+          const limit = pageSize();
+          const offset = (page - 1) * limit;
 
-    return ranked;
-  }
+          return new Promise((resolve, reject) => {
+            const tx = db.transaction("posts", "readonly");
+            const store = tx.objectStore("posts");
+            const index = store.index("by_created"); // Usa o índice
+            const req = index.openCursor(null, "prev"); // 'prev' = ordem descendente (mais novo primeiro)
+            let advanced = false;
 
-  function renderPosts(items) {
-    countPosts();
-    postsContainer.innerHTML = "";
-    if (!items.length) {
-      postsContainer.innerHTML = '<div class="py-8 text-center text-gray-500">Nenhum post nesta página.</div>';
-      return;
-    }
+            req.onsuccess = (event) => {
+              const cursor = event.target.result;
+              if (!cursor) {
+                resolve(items); // Acabaram os itens
+                return;
+              }
 
-    items.forEach(p => {
-      
-        /*if(p.author === "ai-summaries"){
-            //count++;
-            //console.log(count);
-        }*/
-        //console.log(Object.entries(counts));
-      const card = document.createElement("article");
-      card.className = "bg-white shadow p-4 rounded-lg";
-      const title = escapeHtml(p.title || "(sem título)");
-      const payout = p.pending_payout_value || "0 HIVE";
-      const bodyPreview = escapeHtml((p.body || "").slice(0, 400));
-      const created = p.created ? new Date(p.created).toLocaleString() : "-";
-      const rootTag = p.parent_author
-        ? `<span class="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded">Reply</span>`
-        : `<span class="px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded">Post raiz</span>`;
-      card.innerHTML = `
+              // Pula os itens das páginas anteriores (offset)
+              if (!advanced && offset > 0) {
+                advanced = true;
+                cursor.advance(offset); // Pula 'offset' itens
+                return; // onsuccess será chamado novamente na posição correta
+              }
+
+              // Adiciona itens até o limite da página
+              if (items.length < limit) {
+                items.push(cursor.value);
+                cursor.continue(); // Vai para o próximo item
+              } else {
+                resolve(items); // Página está cheia
+              }
+            };
+            req.onerror = (e) => reject(e.target.error);
+          });
+        }
+
+        async function countPosts() {
+          const allpost = await getAllPosts();
+          console.log("allpost");
+          console.log(allpost);
+
+          const counts = {};
+          allpost.forEach((p) => {
+            counts[p.author] = (counts[p.author] || 0) + 1;
+          });
+
+          const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+          console.log(ranked);
+
+          return ranked;
+        }
+        async function refreshPage() {
+          setStatus(`🔄 Carregando página ${currentPage}...`, "text-blue-600");
+
+          // Busca os itens da página E o total de posts em paralelo
+          const [items, total] = await Promise.all([
+            getPage(currentPage),
+            getTotalPostCount(),
+          ]);
+
+          renderPosts(items);
+          updateControls(total); // Passa o total para atualizar os controles
+
+          if (items.length > 0) {
+            setStatus(`Página ${currentPage} carregada.`, "text-gray-600");
+          } else if (total > 0) {
+            setStatus(`Página ${currentPage} está vazia.`, "text-gray-500");
+          } else {
+            setStatus(
+              "Nenhum post encontrado. Sincronize para começar.",
+              "text-gray-500"
+            );
+          }
+        }
+
+        function renderPosts(items) {
+          //countPosts();
+          postsContainer.innerHTML = "";
+          if (!items.length) {
+            postsContainer.innerHTML =
+              '<div class="py-8 text-center text-gray-500">Nenhum post nesta página.</div>';
+            return;
+          }
+
+          items.forEach((p) => {
+            if (spammerList.has(p.author)) {
+                return; // Pula este post e vai para o próximo
+            }
+            const card = document.createElement("article");
+            card.className = "bg-white shadow p-4 rounded-lg";
+
+            const flairText = authorFlairs[p.author];
+            const flairHtml = flairText 
+              ? `<span class="ml-2 px-1.5 py-0.5 text-xs font-semibold bg-red-100 text-red-800 rounded-full">${escapeHtml(flairText)}</span>`
+              : ""; // Se não, retorna uma string vazia
+
+            const title = escapeHtml(p.title || "(sem título)");
+            const payout = escapeHtml(p.pending_payout_value || "0 HIVE");
+            const bodyPreview = escapeHtml((p.body || "").slice(0, 400));
+            const created = p.created
+              ? new Date(p.created).toLocaleString()
+              : "-";
+            const escapedCreated = escapeHtml(created);
+
+            const rootTag = p.parent_author
+              ? `<span class="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded">Reply</span>`
+              : `<span class="px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded">Post raiz</span>`;
+            card.innerHTML = `
         <div class="flex justify-between">
           <div>
             <h3 class="text-lg font-semibold">${title}</h3>
-            <div class="text-xs text-gray-500">Por <b>${escapeHtml(p.author)}</b> • ${created}</div>
+            <div class="text-xs text-gray-500">Por <b>${escapeHtml(
+              p.author
+            )}</b> ${flairHtml} <span class="mx-2">•</span> ${escapedCreated}</div>
           </div>
           ${rootTag}
         </div>
 
-        <div class="mt-3 text-gray-700">${bodyPreview}${(p.body && p.body.length > 400) ? "…" : ""}</div>  <div class="mt-3 text-red-700">• $${payout}</div>
+        <div class="mt-3 text-gray-700">${bodyPreview}${
+              p.body && p.body.length > 400 ? "…" : ""
+            }</div>  <div class="mt-3 text-red-700">• $${payout}</div>
       `;
-      postsContainer.appendChild(card);
-    });
+            postsContainer.appendChild(card);
+          });
+        }
 
+        function escapeHtml(s, allowHtml = false) {
+          s = String(s || "");
 
-  }
+          // Se DOMPurify estiver disponível, usa ele
+          if (typeof DOMPurify !== "undefined") {
+            // Se allowHtml for false, remove TODAS as tags (modo texto puro)
+            return DOMPurify.sanitize(s, allowHtml ? {} : { ALLOWED_TAGS: [] });
+          }
 
-function escapeHtml(s, allowHtml = false) {
-  s = String(s || "");
+          // Fallback manual (caso DOMPurify não esteja carregado)
+          return s
+            .replaceAll("&", "&amp;")
+            .replaceAll("<", "&lt;")
+            .replaceAll(">", "&gt;")
+            .replaceAll('"', "&quot;")
+            .replaceAll("'", "&#39;");
+        }
 
-  // Se DOMPurify estiver disponível, usa ele
-  if (typeof DOMPurify !== "undefined") {
-    // Se allowHtml for false, remove TODAS as tags (modo texto puro)
-    console.log("DOMPurify available");
-    return DOMPurify.sanitize(s, allowHtml ? {} : { ALLOWED_TAGS: [] });
-  }
+        function updateControls(total) {
+          totalPages = Math.ceil(total / pageSize());
+          pageInfo.textContent = `Página ${currentPage} de ${totalPages}`;
+          prevBtn.disabled = currentPage <= 1;
+          nextBtn.disabled = currentPage >= totalPages;
+          gotoInput.value = currentPage; // Sincroniza o input com a página atual
+        }
+        async function deleteOldPosts() {
+          const db = await getDB();
+          
+          // 1. Calcular a data de corte
+          // O campo 'created' é uma string ISO (ex: "2024-01-01T10:00:00").
+          // Podemos usar um objeto Date para criar o range.
+          const cutoffTime = new Date().getTime() - (24 * 60 * 60 * 1000);
+          const cutoffDate = new Date(cutoffTime); 
 
-  // Fallback manual (caso DOMPurify não esteja carregado)
-  return s
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
+          console.log(`🧹 Deletando posts mais antigos que ${cutoffDate.toLocaleString()}`);
 
-  async function updateControls() {
-    const total = (await getAllPosts()).length;
-    totalPages = Math.ceil(total / pageSize());
-    pageInfo.textContent = `Página ${currentPage} de ${totalPages}`;
-    prevBtn.disabled = currentPage <= 1;
-    nextBtn.disabled = currentPage >= totalPages;
-  }
+          return new Promise((resolve, reject) => {
+            // 2. Abrir transação em modo "readwrite"
+            const tx = db.transaction("posts", "readwrite"); 
+            const store = tx.objectStore("posts");
+            const index = store.index("by_created");
 
-  // === Eventos ===
-  prevBtn.onclick = async () => { if (currentPage > 1) currentPage--; renderPosts(await getPage(currentPage)); updateControls(); };
-  nextBtn.onclick = async () => { currentPage++; renderPosts(await getPage(currentPage)); updateControls(); };
-  gotoBtn.onclick = async () => { currentPage = Math.max(1, +gotoInput.value || 1); renderPosts(await getPage(currentPage)); updateControls(); };
-  pageSizeSel.onchange = async () => { currentPage = 1; renderPosts(await getPage(currentPage)); updateControls(); };
-  syncBtn.onclick = async () => { await syncFromServer(); renderPosts(await getPage(currentPage)); updateControls(); };
+            // 3. Criar um range: tudo que for *menor que ou igual a* data de corte
+            const range = IDBKeyRange.upperBound(cutoffDate.toISOString()); 
 
-  // === Inicialização ===
-  (async function init() {
-    db = await openDB();
-    setStatus("📂 Banco de dados carregado (IndexedDB).");
-    await syncFromServer();
-    renderPosts(await getPage(currentPage));
-    updateControls();
-  })();
-})();
-</script>
-</body>
+            const req = index.openCursor(range); // Abre cursor no índice
+            let deleteCount = 0;
+
+            req.onsuccess = (event) => {
+              const cursor = event.target.result;
+              if (cursor) {
+                // 4. Encontrou um post antigo: delete!
+                cursor.delete(); 
+                deleteCount++;
+                cursor.continue(); // Vai para o próximo item no range
+              } else {
+                // 5. Cursor terminou (não há mais posts antigos)
+                console.log(`✅ ${deleteCount} posts antigos deletados.`);
+                resolve(deleteCount);
+              }
+            };
+
+            req.onerror = (e) => {
+              console.error("❌ Erro ao deletar posts antigos:", e.target.error);
+              reject(e.target.error);
+            };
+          });
+        }
+
+        // === Eventos ===
+        prevBtn.onclick = () => {
+          if (currentPage > 1) {
+            currentPage--;
+            refreshPage();
+          }
+        };
+        nextBtn.onclick = () => {
+          if (currentPage < totalPages) {
+            // Usa a variável global 'totalPages'
+            currentPage++;
+            refreshPage();
+          }
+        };
+        gotoBtn.onclick = async () => {
+          // Busca o total para saber o limite máximo da página
+          const total = await getTotalPostCount();
+          totalPages = Math.ceil(total / pageSize());
+          currentPage = Math.max(
+            1,
+            Math.min(Number(gotoInput.value), totalPages || 1)
+          );
+          refreshPage();
+        };
+        pageSizeSel.onchange = () => {
+          currentPage = 1; // Volta para a página 1
+          refreshPage();
+        };
+        syncBtn.onclick = async () => {
+          // Adiciona feedback de loading
+          syncBtn.disabled = true;
+          syncBtn.textContent = "Sincronizando...";
+
+          await syncFromServer();
+          await deleteOldPosts();
+
+          // Reseta para a página 1 se a página atual não existir mais (ex: mudou page size)
+          const total = await getTotalPostCount();
+          totalPages = Math.ceil(total / pageSize());
+          if (currentPage > totalPages) currentPage = 1;
+
+          await refreshPage(); // Atualiza a visualização
+
+          syncBtn.disabled = false;
+          syncBtn.textContent = "🔄 Sincronizar";
+        };
+        // === Inicialização ===
+        (async function init() {
+          db = await openDB();
+          setStatus("📂 Banco de dados carregado (IndexedDB).");
+          await deleteOldPosts();
+          await syncFromServer(); // Sincroniza primeiro
+          currentPage = 1;
+          await refreshPage(); // Depois carrega a página 1
+        })();
+      })();
+    </script>
+  </body>
 </html>
