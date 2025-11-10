@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Hive Sync — IndexedDB & Paginação</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.2/dist/purify.min.js"></script>
+</head>
+<body class="bg-gray-100 text-gray-800">
+
+  <header class="bg-white shadow-md py-4">
+    <div class="max-w-6xl mx-auto flex justify-between items-center px-4">
+      <h1 class="text-2xl font-bold text-blue-600">Hive Sync</h1>
+      <div class="flex items-center gap-3">
+        <button id="syncBtn" class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg">🔄 Sincronizar</button>
+        <div class="text-sm text-gray-600">Page size:
+          <select id="pageSizeSel" class="ml-2 border rounded px-2 py-1">
+            <option value="10000" >10000</option>
+            <option value="5000" >5000</option>
+            <option value="1000" selected>1000</option>
+            <option value="500">500</option>
+            <option value="200">200</option>
+            <option value="100">100</option>
+          </select>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <section class="max-w-6xl mx-auto mt-4 px-4 text-sm text-gray-600" id="status">Carregue uma página para começar.</section>
+
+  <main class="max-w-6xl mx-auto mt-6 px-4">
+    <div class="flex items-center justify-between mb-4">
+      <div class="flex gap-2 items-center">
+        <button id="prevBtn" class="px-3 py-1 border rounded bg-white" disabled>← Anterior</button>
+        <button id="nextBtn" class="px-3 py-1 border rounded bg-white" disabled>Próxima →</button>
+        <span id="pageInfo" class="text-sm text-gray-600 ml-3">Página 1</span>
+      </div>
+
+      <div class="flex gap-2 items-center">
+        <label class="text-sm text-gray-600">Ir para página</label>
+        <input id="gotoInput" class="border rounded px-2 py-1 w-20" type="number" min="1" value="1" />
+        <button id="gotoBtn" class="px-3 py-1 border rounded bg-white">Ir</button>
+      </div>
+    </div>
+
+    <div id="postsContainer" class="space-y-4"></div>
+  </main>
+
+<script>
+(() => {
+  const API_URL = "http://localhost:4000/api/posts";
+  const DB_NAME = "HiveSyncDB";
+  const DB_VERSION = 4; // aumenta pra recriar com meta
+  let db = null;
+
+  let currentPage = 1;
+  function pageSize() { return Number(pageSizeSel.value || 1000); }
+  let totalPages = 1;
+
+  // === Referências DOM ===
+  const statusEl = document.getElementById("status");
+  const postsContainer = document.getElementById("postsContainer");
+  const syncBtn = document.getElementById("syncBtn");
+  const pageSizeSel = document.getElementById("pageSizeSel");
+  const prevBtn = document.getElementById("prevBtn");
+  const nextBtn = document.getElementById("nextBtn");
+  const gotoBtn = document.getElementById("gotoBtn");
+  const gotoInput = document.getElementById("gotoInput");
+  const pageInfo = document.getElementById("pageInfo");
+
+  function setStatus(msg, cls="text-gray-600") {
+    statusEl.className = cls;
+    statusEl.textContent = msg;
+  }
+
+  // === IndexedDB ===
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(DB_NAME, DB_VERSION);
+
+      request.onupgradeneeded = (event) => {
+        const db = event.target.result;
+        if (!db.objectStoreNames.contains("posts")) {
+          db.createObjectStore("posts", { keyPath: "permlink" });
+        }
+        if (!db.objectStoreNames.contains("meta")) {
+          db.createObjectStore("meta", { keyPath: "key" });
+        }
+        console.log("📦 Stores criadas/confirmadas:", db.objectStoreNames);
+      };
+
+      request.onsuccess = (event) => {
+        db = event.target.result;
+        console.log("✅ Banco aberto com sucesso:", db);
+        resolve(db);
+      };
+
+      request.onerror = (event) => {
+        console.error("❌ Erro ao abrir DB:", event.target.error);
+        reject(event.target.error);
+      };
+    });
+  }
+
+  async function getDB() {
+    if (db) return db;
+    db = await openDB();
+    return db;
+  }
+
+
+
+  async function savePosts(posts) {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("posts", "readwrite");
+      const store = tx.objectStore("posts");
+      posts.forEach(p => store.put(p));
+      tx.oncomplete = () => resolve();
+      tx.onerror = e => reject(e.target.error);
+    });
+  }
+
+  async function getAllPosts() {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("posts", "readonly");
+      const store = tx.objectStore("posts");
+      const req = store.getAll();
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = e => reject(e.target.error);
+    });
+  }
+
+  async function getLastSyncedDate() {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("meta", "readonly");
+      const store = tx.objectStore("meta");
+      const req = store.get("lastSynced");
+      req.onsuccess = () => resolve(req.result ? req.result.value : null);
+      req.onerror = () => reject(req.error);
+    });
+  }
+
+  async function setLastSyncedDate(date) {
+    const db = await getDB();
+    return new Promise((resolve, reject) => {
+      const tx = db.transaction("meta", "readwrite");
+      const store = tx.objectStore("meta");
+      store.put({ key: "lastSynced", value: date });
+      tx.oncomplete = resolve;
+      tx.onerror = e => reject(e.target.error);
+    });
+  }
+
+  // === Sincronização ===
+  async function syncFromServer() {
+    const lastDate = await getLastSyncedDate();
+    let url = `${API_URL}?limit=${pageSize()}`;
+    if (lastDate) url += `&since=${encodeURIComponent(lastDate)}`;
+    setStatus(`🔄 Sincronizando com servidor... (since=${lastDate || "nenhum"})`, "text-blue-600");
+
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error("HTTP " + resp.status);
+    const j = await resp.json();
+    const items = j.items || j;
+
+    if (items.length === 0) {
+      setStatus("✅ Nenhum novo post para sincronizar.", "text-green-600");
+      return;
+    }
+
+    await savePosts(items);
+    const newestDate = items.reduce((max, p) =>
+      new Date(p.created) > new Date(max) ? p.created : max,
+      lastDate || items[0].created
+    );
+    await setLastSyncedDate(newestDate);
+    setStatus(`✅ Sincronizados ${items.length} novos posts. Último: ${new Date(newestDate).toLocaleString()}`, "text-green-600");
+  }
+
+  async function getPage(page) {
+    const all = await getAllPosts();
+    all.sort((a, b) => new Date(b.created) - new Date(a.created));
+    const start = (page - 1) * pageSize();
+    const end = start + pageSize();
+    return all.slice(start, end);
+  }
+
+  async function countPosts(){
+    const allpost = await getAllPosts();
+    console.log('allpost');
+    console.log(allpost);
+
+    const counts = {};
+    allpost.forEach(p => {
+        counts[p.author] = (counts[p.author] || 0) + 1;
+    });
+
+    const ranked = Object.entries(counts)
+    .sort((a, b) => b[1] - a[1]);
+    console.log(ranked);
+
+    return ranked;
+  }
+
+  function renderPosts(items) {
+    countPosts();
+    postsContainer.innerHTML = "";
+    if (!items.length) {
+      postsContainer.innerHTML = '<div class="py-8 text-center text-gray-500">Nenhum post nesta página.</div>';
+      return;
+    }
+
+    items.forEach(p => {
+      
+        /*if(p.author === "ai-summaries"){
+            //count++;
+            //console.log(count);
+        }*/
+        //console.log(Object.entries(counts));
+      const card = document.createElement("article");
+      card.className = "bg-white shadow p-4 rounded-lg";
+      const title = escapeHtml(p.title || "(sem título)");
+      const payout = p.pending_payout_value || "0 HIVE";
+      const bodyPreview = escapeHtml((p.body || "").slice(0, 400));
+      const created = p.created ? new Date(p.created).toLocaleString() : "-";
+      const rootTag = p.parent_author
+        ? `<span class="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 rounded">Reply</span>`
+        : `<span class="px-2 py-0.5 text-xs bg-green-100 text-green-800 rounded">Post raiz</span>`;
+      card.innerHTML = `
+        <div class="flex justify-between">
+          <div>
+            <h3 class="text-lg font-semibold">${title}</h3>
+            <div class="text-xs text-gray-500">Por <b>${escapeHtml(p.author)}</b> • ${created}</div>
+          </div>
+          ${rootTag}
+        </div>
+
+        <div class="mt-3 text-gray-700">${bodyPreview}${(p.body && p.body.length > 400) ? "…" : ""}</div>  <div class="mt-3 text-red-700">• $${payout}</div>
+      `;
+      postsContainer.appendChild(card);
+    });
+
+
+  }
+
+function escapeHtml(s, allowHtml = false) {
+  s = String(s || "");
+
+  // Se DOMPurify estiver disponível, usa ele
+  if (typeof DOMPurify !== "undefined") {
+    // Se allowHtml for false, remove TODAS as tags (modo texto puro)
+    console.log("DOMPurify available");
+    return DOMPurify.sanitize(s, allowHtml ? {} : { ALLOWED_TAGS: [] });
+  }
+
+  // Fallback manual (caso DOMPurify não esteja carregado)
+  return s
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+  async function updateControls() {
+    const total = (await getAllPosts()).length;
+    totalPages = Math.ceil(total / pageSize());
+    pageInfo.textContent = `Página ${currentPage} de ${totalPages}`;
+    prevBtn.disabled = currentPage <= 1;
+    nextBtn.disabled = currentPage >= totalPages;
+  }
+
+  // === Eventos ===
+  prevBtn.onclick = async () => { if (currentPage > 1) currentPage--; renderPosts(await getPage(currentPage)); updateControls(); };
+  nextBtn.onclick = async () => { currentPage++; renderPosts(await getPage(currentPage)); updateControls(); };
+  gotoBtn.onclick = async () => { currentPage = Math.max(1, +gotoInput.value || 1); renderPosts(await getPage(currentPage)); updateControls(); };
+  pageSizeSel.onchange = async () => { currentPage = 1; renderPosts(await getPage(currentPage)); updateControls(); };
+  syncBtn.onclick = async () => { await syncFromServer(); renderPosts(await getPage(currentPage)); updateControls(); };
+
+  // === Inicialização ===
+  (async function init() {
+    db = await openDB();
+    setStatus("📂 Banco de dados carregado (IndexedDB).");
+    await syncFromServer();
+    renderPosts(await getPage(currentPage));
+    updateControls();
+  })();
+})();
+</script>
+</body>
+</html>
