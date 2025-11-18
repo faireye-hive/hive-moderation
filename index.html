@@ -3,16 +3,30 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Hive Sync — IndexedDB & Paginação</title>
+    <title>Hive Sync — Posts e Ranking</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.2/dist/purify.min.js"></script>
+    <style>
+      /* Estilo para garantir que a página de ranking comece oculta */
+      .hidden {
+        display: none !important;
+      }
+    </style>
   </head>
 
   <body class="bg-gray-100 text-gray-800">
     <header class="bg-white shadow-md py-4">
       <div class="max-w-6xl mx-auto flex justify-between items-center px-4">
         <h1 class="text-2xl font-bold text-blue-600">Hive Sync</h1>
+        
         <div class="flex items-center gap-3">
+          <button
+            id="viewRankingBtn"
+            class="px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-lg"
+          >
+            🏆 Ranking
+          </button>
+          
           <button
             id="syncBtn"
             class="px-4 py-2 bg-blue-500 hover:bg-blue-600 text-white rounded-lg"
@@ -55,7 +69,7 @@
       Carregue uma página para começar.
     </section>
 
-    <main class="max-w-6xl mx-auto mt-6 px-4">
+    <div id="mainContent" class="max-w-6xl mx-auto mt-6 px-4">
       <div class="flex items-center justify-between mb-4">
         <div class="flex gap-2 items-center">
           <button
@@ -91,8 +105,30 @@
       </div>
 
       <div id="postsContainer" class="space-y-4"></div>
-    </main>
-
+    </div>
+    
+    <div id="rankingPage" class="hidden max-w-6xl mx-auto mt-6 px-4">
+              <button id="backToPostsBtn" class="mt-6 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+            ← Voltar para Posts
+        </button>
+        
+        <div class="flex justify-between items-center mb-6">
+            <h2 id="rankingTitle" class="text-3xl font-extrabold text-purple-700">🏆 Ranking de Autores</h2>
+            <div class="flex items-center gap-3">
+                <label class="font-medium text-gray-700">Visualizar por:</label>
+                <select id="rankingTypeSelect" class="border rounded-lg px-3 py-1 bg-white">
+                    <option value="posts">Total de Posts</option>
+                    <option value="payout">Payout Pendente</option>
+                </select>
+            </div>
+        </div>
+        <div id="rankingList" class="space-y-4">
+            </div>
+        <button id="backToPostsBtn" class="mt-6 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600">
+            ← Voltar para Posts
+        </button>
+    </div>
+    
     <script type="module" src="./main.js"></script>
   </body>
 </html>

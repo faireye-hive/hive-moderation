@@ -1,4 +1,4 @@
-import { escapeHtml, pageSize } from "./utils.js";
+import { escapeHtml, pageSize, countPosts, rankByPayout } from "./utils.js";
 import {
   openDB,
   getPage,
@@ -32,6 +32,116 @@ const gotoInput = document.getElementById("gotoInput");
 const pageInfo = document.getElementById("pageInfo");
 const loginBtn = document.getElementById("loginBtn");
 const logoutBtn = document.getElementById("logoutBtn");
+
+const mainContent = document.getElementById("mainContent");
+// Adicione uma nova referência DOM
+const rankingPage = document.getElementById("rankingPage");
+const rankingList = document.getElementById("rankingList");
+const backToPostsBtn = document.getElementById("backToPostsBtn");
+// ... e o botão que irá para o ranking na sua UI de posts
+const viewRankingBtn = document.getElementById("viewRankingBtn");
+
+const rankingTitle = document.getElementById("rankingTitle");
+const rankingTypeSelect = document.getElementById("rankingTypeSelect");
+
+
+async function renderRankingPage() {
+    setStatus("🔄 Calculando ranking...", "text-blue-600");
+    rankingList.innerHTML = '<p class="text-gray-500">Calculando posts...</p>';
+
+    // 1. OBTÉM OS DADOS DE RANKING USANDO A FUNÇÃO EXISTENTE
+    const rankedData = await countPosts(); // [ [autor, contagem], [autor, contagem], ... ]
+
+    rankingList.innerHTML = ''; // Limpa a mensagem de carregamento
+
+    if (rankedData.length === 0) {
+        rankingList.innerHTML = '<p class="py-8 text-center text-gray-500">Nenhum dado de postagem para ranquear.</p>';
+        return;
+    }
+
+    // 2. CONSTRÓI A LISTA HTML
+    rankedData.forEach(([author, count], index) => {
+        const rank = index + 1;
+        
+        const listItem = document.createElement("div");
+        listItem.className = "flex justify-between items-center p-3 bg-white shadow rounded-lg";
+        
+        // Adiciona um destaque para os top 3
+        let rankColor = 'text-gray-600';
+        let medal = '🏅'; 
+        if (rank === 1) { medal = '🥇'; rankColor = 'text-yellow-600'; }
+        else if (rank === 2) { medal = '🥈'; rankColor = 'text-gray-500'; }
+        else if (rank === 3) { medal = '🥉'; rankColor = 'text-yellow-800'; }
+
+        listItem.innerHTML = `
+            <div class="flex items-center">
+                <span class="text-xl font-bold w-10 text-center ${rankColor}">${rank}</span>
+                <span class="text-2xl ml-2">${medal}</span>
+                <b class="ml-4 text-gray-800">${escapeHtml(author)}</b>
+            </div>
+            <span class="text-lg font-semibold text-blue-600">${count} posts</span>
+        `;
+        rankingList.appendChild(listItem);
+    });
+
+    setStatus(`✅ Ranking de ${rankedData.length} autores carregado.`, "text-green-600");
+}
+
+function updateRankingDisplay(rankingType) {
+    if (rankingType === 'payout') {
+        rankingTitle.textContent = '💰 Ranking por Payout Pendente';
+        renderPayoutRankingPage();
+    } else { // 'posts'
+        rankingTitle.textContent = '🏆 Ranking por Total de Posts';
+        renderRankingPage(); // Chamada original do ranking de posts
+    }
+}
+
+async function renderPayoutRankingPage() {
+    setStatus("🔄 Calculando Ranking por Payout...", "text-blue-600");
+    rankingList.innerHTML = '<p class="text-gray-500 text-center">Calculando valores...</p>';
+
+    // 1. OBTÉM OS DADOS DE RANKING DE PAYOUT
+    const rankedData = await rankByPayout(); // [ [autor, somaTotal], [autor, somaTotal], ... ]
+
+    rankingList.innerHTML = ''; // Limpa a mensagem de carregamento
+
+    if (rankedData.length === 0) {
+        rankingList.innerHTML = '<p class="py-8 text-center text-gray-500">Nenhum valor de payout pendente para ranquear.</p>';
+        setStatus(`✅ Ranking de Payout carregado. Nenhum valor pendente.`, "text-gray-600");
+        return;
+    }
+
+    // 2. CONSTRÓI A LISTA HTML
+    rankedData.forEach(([author, totalValue], index) => {
+        const rank = index + 1;
+        
+        const listItem = document.createElement("div");
+        listItem.className = "flex justify-between items-center p-4 bg-gray-50 hover:bg-white shadow-sm rounded-lg border-l-4 border-green-400 transition transform hover:scale-[1.01]";
+        
+        let rankColor = 'text-gray-600';
+        let medal = ''; 
+        if (rank === 1) { medal = '🥇'; rankColor = 'text-yellow-600'; }
+        else if (rank === 2) { medal = '🥈'; rankColor = 'text-gray-500'; }
+        else if (rank === 3) { medal = '🥉'; rankColor = 'text-yellow-800'; }
+        else { medal = `Nº${rank}`; rankColor = 'text-gray-500'; }
+
+        // Formata o valor para exibição (ex: $150.550 HIVE)
+        const displayValue = `${totalValue.toFixed(3)} HIVE`; 
+
+        listItem.innerHTML = `
+            <div class="flex items-center">
+                <span class="text-xl font-extrabold w-12 text-center ${rankColor}">${medal}</span>
+                <b class="ml-4 text-gray-800 text-lg">${escapeHtml(author)}</b>
+            </div>
+            <span class="text-xl font-bold text-green-600 bg-green-100 px-3 py-1 rounded-full">${displayValue}</span>
+        `;
+        rankingList.appendChild(listItem);
+    });
+
+    setStatus(`✅ Ranking de Payout de ${rankedData.length} autores carregado.`, "text-green-600");
+}
+
 
 function saveLogin(username) {
   myUsername = username;
@@ -110,7 +220,10 @@ async function refreshPage() {
     getTotalPostCount(),
   ]);
 
-  await renderPosts(items);
+  const rankedCountsArray = await countPosts();
+  const authorPostCountsMap = new Map(rankedCountsArray);
+
+  await renderPosts(items, authorPostCountsMap);
   updateControls(total); // Passa o total para atualizar os controles
 
   if (items.length > 0) {
@@ -125,7 +238,7 @@ async function refreshPage() {
   }
 }
 
-async function renderPosts(items) {
+async function renderPosts(items, authorPostCountsMap) {
   //countPosts();
   postsContainer.innerHTML = "";
   if (!items.length) {
@@ -149,6 +262,14 @@ async function renderPosts(items) {
     const repDisplay = currentReputation
       ? `<span class="text-xs ml-1 text-gray-400">(${currentReputation})</span>`
       : "";
+
+// 💡 Usa o Map global para obter a contagem TOTAL do autor
+    const totalPostCount = authorPostCountsMap.get(p.author) || 0;
+    
+    const countDisplay = totalPostCount > 0 
+        ? `<span class="ml-2 px-1.5 py-0.5 text-xs font-medium bg-blue-100 text-blue-800 rounded">Total Posts: ${totalPostCount}</span>`
+        : '';
+
 
     const card = document.createElement("article");
     // --- 💡 ALTERAÇÃO AQUI ---
@@ -201,7 +322,7 @@ async function renderPosts(items) {
             <h3 class="text-lg font-semibold">${title}</h3>
             <div class="text-xs text-gray-500">Por <b>${escapeHtml(
               p.author
-            )}</b> Rep: ${repDisplay} Flair: ${flairHtml} <span class="mx-2">•</span> ${escapedCreated}</div>
+            )}</b> Rep: ${repDisplay} QT: ${countDisplay} Flair: ${flairHtml} <span class="mx-2">•</span> ${escapedCreated}</div>
           </div>
           ${rootTag}
         </div>
@@ -377,6 +498,48 @@ syncBtn.onclick = async () => {
   syncBtn.disabled = false;
   syncBtn.textContent = "🔄 Sincronizar";
 };
+
+
+function showView(viewId) {
+    // Esconde todos os contêineres principais e mostra apenas o desejado
+    const views = [mainContent, rankingPage];
+    
+    // Adiciona 'hidden' a todos
+    views.filter(v => v).forEach(view => view.classList.add('hidden'));
+
+    if (viewId === 'ranking') {
+        if (rankingPage) rankingPage.classList.remove('hidden');
+        
+        // 💡 A CHAVE: Obter o tipo de ranking selecionado e renderizá-lo.
+        const selectedType = rankingTypeSelect.value || 'posts'; 
+        rankingTypeSelect.value = selectedType; // Garante que o dropdown reflita o estado
+        updateRankingDisplay(selectedType); 
+        
+    } else { // 'posts' (mainContent)
+        if (mainContent) mainContent.classList.remove('hidden');
+        refreshPage(); // Recarrega os posts da página principal
+    }
+}
+
+if (rankingTypeSelect) {
+    rankingTypeSelect.onchange = (e) => {
+        updateRankingDisplay(e.target.value);
+    };
+}
+// === Eventos de Navegação ===
+
+// Adicione um botão para "Ver Ranking" na UI principal (você precisará adicioná-lo ao HTML)
+if (viewRankingBtn) {
+    viewRankingBtn.onclick = () => showView('ranking');
+}
+
+// Botão "Voltar" na página de ranking
+backToPostsBtn.onclick = () => showView('posts');
+
+
+
+
+
 // === Inicialização ===
 (async function init() {
   const savedUsername = localStorage.getItem(LOGIN_STORAGE_KEY);
@@ -397,11 +560,14 @@ syncBtn.onclick = async () => {
   }
 
   currentPage = 1;
-  await refreshPage(); // Depois carrega a página 1
+  showView('posts');
+  //await refreshPage(); // Depois carrega a página 1
 
   console.log("savedUsername aghain", savedUsername);
 
   // 2. Eventos de Login/Logout
   loginBtn.onclick = performLogin;
   logoutBtn.onclick = logout;
+
+  
 })();

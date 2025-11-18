@@ -1,3 +1,5 @@
+import { getAllPosts } from "./mDB.js"; // Garanta que isso exista
+
 export function escapeHtml(s, allowHtml = false) {
   s = String(s || "");
 
@@ -27,6 +29,39 @@ export async function countPosts() {
   });
 
   const ranked = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  console.log(ranked);
+
+  return ranked;
+}
+
+export async function rankByPayout() {
+  const allPosts = await getAllPosts();
+  console.log("allPosts para Payout");
+
+  const totals = {};
+
+  allPosts.forEach((p) => {
+    const author = p.author;
+    let payoutValue = 0;
+
+    // 1. Extrair o valor numérico da string (ex: "5.123 HIVE" -> 5.123)
+    if (p.pending_payout_value) {
+      // Usa regex para encontrar o primeiro número decimal na string
+      const match = p.pending_payout_value.match(/(\d+\.?\d*)/);
+      if (match) {
+        payoutValue = parseFloat(match[1]) / 2;
+        payoutValue = payoutValue / 0.107;
+      }
+    }
+
+    // 2. Acumular o valor
+    totals[author] = (totals[author] || 0) + payoutValue;
+  });
+
+  // 3. Ranqueamento: Classificar do maior valor para o menor
+  const ranked = Object.entries(totals).sort((a, b) => b[1] - a[1]);
+
+  console.log("Ranking por Payout:");
   console.log(ranked);
 
   return ranked;

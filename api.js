@@ -9,7 +9,23 @@ const API_URL = "http://localhost:4000/api/posts";
 
 
 export async function syncFromServer() {
-  const lastDate = await getLastSyncedDate();
+  let lastDate = await getLastSyncedDate();
+
+  const limitHours = 24; 
+  const timeLimit = new Date();
+  timeLimit.setHours(timeLimit.getHours() - limitHours); // Ex: 1 dia atrás
+
+  console.log("lastDate", lastDate);
+  console.log("timeLimit", timeLimit);
+
+  if (lastDate && new Date(lastDate) < timeLimit) {
+      // Se o lastDate (ex: 5 dias atrás) for MENOR/MAIS ANTIGO que o timeLimit (1 dia atrás)
+      console.warn("⚠️ lastDate muito antigo. Ajustando para o limite de 24 horas.");
+      lastDate = timeLimit.toISOString();
+      console.log(lastDate);
+  }
+
+
   let url = `${API_URL}?limit=${pageSize()}`;
   if (lastDate) url += `&since=${encodeURIComponent(lastDate)}`;
 
@@ -91,5 +107,33 @@ export const spammerList = new Set([
   "lstr.alerts",
   "duo-tip",
   "pizzabot",
+  "w7ngc",
+  "wiv01",
+  "waivio.updates10",
+  "waivio.updates09",
+  "waivio.updates08",
+  "waivio.updates07",
+  "waivio.updates06",
+  "waivio.updates05",
+  "waivio.updates04",
+  "waivio.updates03",
+  "waivio.updates02",
+  "waivio.updates01",
+  "waivio.updates",
+  "networkallstar",
+  "benef.alive",
+  "fun.farms",
+  "asd09",
+  "zxc43",
+  "surge.yield",
+  "ttsla.yield",
+  "hive-164923",
+  "askrafiki",
+  "conscript",
+  "recipes.curator",
+  "hk14d",
+
+
+
   // Adicione aqui os nomes exatos dos autores
 ]);
